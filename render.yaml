@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: paper-trading-desk
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TRADING_MODE
+        value: PAPER
+      - key: LIVE_TRADING_ENABLED
+        value: "false"
+      - key: USE_DEMO_MARKET_DATA
+        value: "false"
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./data/paper_trading.db
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ANGEL_API_KEY
+        sync: false
+      - key: ANGEL_CLIENT_CODE
+        sync: false
+      - key: ANGEL_PASSWORD
+        sync: false
+      - key: ANGEL_TOTP_SECRET
+        sync: false
+      - key: DEFAULT_STARTING_CAPITAL
+        value: "100000"

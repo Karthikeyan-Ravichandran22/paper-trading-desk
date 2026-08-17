@@ -11,6 +11,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.core.config import get_settings
@@ -23,6 +25,8 @@ from app.services.strategy.engine import signal_engine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("paper_trading")
+
+FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -127,6 +131,19 @@ def create_app() -> FastAPI:
             pass
         except Exception:
             logger.exception("WebSocket error")
+
+    # Serve built React app (single-port deploy for free tunnels)
+    if FRONTEND_DIST.exists():
+        assets = FRONTEND_DIST / "assets"
+        if assets.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets)), name="assets")
+
+        @app.get("/{full_path:path}")
+        async def spa(full_path: str):
+            candidate = FRONTEND_DIST / full_path
+            if full_path and candidate.exists() and candidate.is_file():
+                return FileResponse(candidate)
+            return FileResponse(FRONTEND_DIST / "index.html")
 
     return app
 
