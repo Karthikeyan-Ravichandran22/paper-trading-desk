@@ -1,0 +1,28 @@
+name: Keep Render Awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping paper trading health endpoint
+        run: |
+          set -e
+          URL="https://paper-trading-desk.onrender.com/health"
+          echo "Pinging $URL"
+          for i in 1 2 3; do
+            code=$(curl -s -o /tmp/out.json -w "%{http_code}" --max-time 90 "$URL" || true)
+            echo "try $i -> HTTP $code"
+            cat /tmp/out.json || true
+            echo
+            if [ "$code" = "200" ]; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Health ping failed"
+          exit 1
