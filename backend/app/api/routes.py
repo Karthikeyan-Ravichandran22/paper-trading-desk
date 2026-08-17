@@ -54,6 +54,7 @@ class PortfolioSettingsUpdate(BaseModel):
 class WatchlistAdd(BaseModel):
     symbol: str
     exchange: str = "NSE"
+    token: str = ""
 
 
 class BacktestRequest(BaseModel):
@@ -173,33 +174,80 @@ async def get_watchlist(db: AsyncSession = Depends(get_db)) -> list[dict]:
         await db.execute(select(models.Position).where(models.Position.status == "OPEN"))
     ).scalars().all()
     pos_map = {p.symbol: p.side for p in positions}
+    meta = {r.symbol: r for r in rows}
 
     out = []
     for q in quotes:
         sig = None
         if last_sig and last_sig.get("symbol") == q["symbol"]:
             sig = last_sig.get("signal")
-        out.append({**q, "signal": sig, "position": pos_map.get(q["symbol"])})
+        item = meta.get(q["symbol"])
+        out.append(
+            {
+                **q,
+                "exchange": (item.exchange if item else q.get("exchange")) or "NSE",
+                "token": (item.token if item else "") or q.get("token") or "",
+                "signal": sig,
+                "position": pos_map.get(q["symbol"]),
+            }
+        )
     return out
 
 
 @router.post("/watchlist")
 async def add_watchlist(body: WatchlistAdd, db: AsyncSession = Depends(get_db)) -> dict:
+    from app.services.market.instruments import resolve_instrument
+
+    resolved = await resolve_instrument(body.symbol, body.exchange)
+    symbol = resolved["symbol"]
+    exchange = resolved["exchange"]
+    token = body.token or resolved.get("token") or ""
+
     existing = (
         await db.execute(
             select(models.WatchlistItem).where(
-                models.WatchlistItem.symbol == body.symbol.upper(),
-                models.WatchlistItem.exchange == body.exchange,
+                models.WatchlistItem.symbol == symbol,
+                models.WatchlistItem.exchange == exchange,
             )
         )
     ).scalar_one_or_none()
     if existing:
-        return {"status": "exists", "symbol": existing.symbol}
-    item = models.WatchlistItem(symbol=body.symbol.upper(), exchange=body.exchange)
+        if token and not existing.token:
+            existing.token = token
+            await db.commit()
+        return {
+            "status": "exists",
+            "symbol": existing.symbol,
+            "exchange": existing.exchange,
+            "token": existing.token,
+            "trading_symbol": resolved.get("trading_symbol"),
+            "expiry": resolved.get("expiry"),
+        }
+    item = models.WatchlistItem(symbol=symbol, exchange=exchange, token=token)
     db.add(item)
     await db.commit()
-    market_data_service.get_candles(body.symbol.upper(), "5m", 200)
-    return {"status": "added", "symbol": item.symbol}
+    market_data_service.get_candles(symbol, "5m", 200)
+    # Prefer Angel LTP when token is known
+    tick = market_data_service.get_tick(symbol) or {}
+    tick.update(
+        {
+            "symbol": symbol,
+            "exchange": exchange,
+            "token": token,
+            "trading_symbol": resolved.get("trading_symbol"),
+            "source": market_data_service.source,
+        }
+    )
+    market_data_service._ticks[symbol] = tick
+    return {
+        "status": "added",
+        "symbol": item.symbol,
+        "exchange": item.exchange,
+        "token": item.token,
+        "trading_symbol": resolved.get("trading_symbol"),
+        "expiry": resolved.get("expiry"),
+        "lot_size": resolved.get("lot_size"),
+    }
 
 
 @router.delete("/watchlist/{symbol}")

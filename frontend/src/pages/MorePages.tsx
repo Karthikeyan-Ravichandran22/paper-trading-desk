@@ -369,7 +369,8 @@ export function ChartsPage() {
 
 export function WatchlistPage() {
   const [rows, setRows] = useState<any[]>([]);
-  const [sym, setSym] = useState('');
+  const [sym, setSym] = useState('CRUDEOIL');
+  const [exch, setExch] = useState('MCX');
   const load = () => api.watchlist().then(setRows);
   useEffect(() => {
     load();
@@ -379,18 +380,26 @@ export function WatchlistPage() {
   return (
     <div>
       <h1 className="page-title">Watchlist</h1>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-        <input value={sym} onChange={(e) => setSym(e.target.value.toUpperCase())} placeholder="Add symbol" style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', padding: '0.4rem 0.6rem', borderRadius: 4 }} />
-        <button className="btn primary" onClick={async () => { await api.addWatch(sym); setSym(''); load(); }}>Add</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+        <input value={sym} onChange={(e) => setSym(e.target.value.toUpperCase())} placeholder="CRUDEOIL" style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', padding: '0.4rem 0.6rem', borderRadius: 4 }} />
+        <select value={exch} onChange={(e) => setExch(e.target.value)} style={{ background: 'var(--bg-1)', border: '1px solid var(--border)', padding: '0.4rem 0.6rem', borderRadius: 4 }}>
+          <option value="MCX">MCX</option>
+          <option value="NSE">NSE</option>
+          <option value="BSE">BSE</option>
+          <option value="NFO">NFO</option>
+        </select>
+        <button className="btn primary" onClick={async () => { await api.addWatch(sym, exch); setSym(''); load(); }}>Add</button>
+        <button className="btn" onClick={async () => { await api.addWatch('CRUDEOIL', 'MCX'); load(); }}>Add MCX CRUDEOIL</button>
       </div>
       <div className="panel">
         <div className="panel-b" style={{ padding: 0 }}>
           <table className="table">
-            <thead><tr><th>Symbol</th><th>LTP</th><th>Change %</th><th>Volume</th><th>Signal</th><th>Position</th><th></th></tr></thead>
+            <thead><tr><th>Symbol</th><th>Exch</th><th>LTP</th><th>Change %</th><th>Volume</th><th>Signal</th><th>Position</th><th></th></tr></thead>
             <tbody>
               {rows.map((w) => (
-                <tr key={w.symbol}>
+                <tr key={`${w.exchange}-${w.symbol}`}>
                   <td>{w.symbol}</td>
+                  <td>{w.exchange || '—'}</td>
                   <td>{w.ltp}</td>
                   <td className={(w.change_pct || 0) >= 0 ? 'up' : 'down'}>{w.change_pct}%</td>
                   <td>{w.volume}</td>

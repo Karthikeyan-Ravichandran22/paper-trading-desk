@@ -45,8 +45,8 @@ async def seed_database() -> None:
                     version=SoreScalperPro.VERSION,
                     pine_source=SORE_SCALPER_PINE,
                     parameters=DEFAULT_PARAMS,
-                    symbols=["NIFTY", "BANKNIFTY", "RELIANCE", "TCS"],
-                    exchange="NSE",
+                    symbols=["CRUDEOIL", "NIFTY", "BANKNIFTY"],
+                    exchange="MCX",
                     timeframe="5m",
                     is_active=True,
                     validation_status="PASS" if report.passed else "FAIL",
@@ -61,8 +61,16 @@ async def seed_database() -> None:
         # Watchlist
         result = await db.execute(select(models.WatchlistItem).limit(1))
         if not result.scalar_one_or_none():
-            for i, sym in enumerate(["NIFTY", "BANKNIFTY", "RELIANCE", "TCS", "INFY"]):
-                db.add(models.WatchlistItem(symbol=sym, exchange="NSE", sort_order=i))
+            for i, (sym, exch) in enumerate(
+                [
+                    ("CRUDEOIL", "MCX"),
+                    ("NIFTY", "NSE"),
+                    ("BANKNIFTY", "NSE"),
+                    ("RELIANCE", "NSE"),
+                    ("TCS", "NSE"),
+                ]
+            ):
+                db.add(models.WatchlistItem(symbol=sym, exchange=exch, sort_order=i))
 
         # 7-day experiment
         result = await db.execute(select(models.PaperExperiment).limit(1))
@@ -72,7 +80,7 @@ async def seed_database() -> None:
                 models.PaperExperiment(
                     name="7-DAY PAPER TEST",
                     strategy_name=SoreScalperPro.NAME,
-                    symbols=["NIFTY", "BANKNIFTY", "RELIANCE", "TCS"],
+                    symbols=["CRUDEOIL", "NIFTY", "BANKNIFTY"],
                     timeframe="5m",
                     starting_capital=settings.default_starting_capital,
                     status="RUNNING",

@@ -39,6 +39,7 @@ DEMO_BASE = {
     "RELIANCE": 2950.0,
     "TCS": 4120.0,
     "INFY": 1850.0,
+    "CRUDEOIL": 7910.0,
 }
 
 
@@ -279,14 +280,17 @@ class MarketDataService:
                 else:
                     # Live Angel One LTP path (when authenticated)
                     for s in symbols:
-                        tick = self._ticks.get(s.upper())
-                        token = (tick or {}).get("token", "")
+                        tick = self._ticks.get(s.upper()) or {}
+                        token = tick.get("token", "")
+                        exchange = tick.get("exchange", "NSE")
+                        tradingsymbol = tick.get("trading_symbol") or s
                         if token:
-                            ltp = await angel_client.get_ltp("NSE", s, token)
+                            ltp = await angel_client.get_ltp(exchange, tradingsymbol, token)
                             if ltp:
                                 self._ticks[s.upper()] = {
-                                    **(tick or {}),
+                                    **tick,
                                     "symbol": s.upper(),
+                                    "exchange": exchange,
                                     "ltp": ltp,
                                     "source": "ANGEL_ONE",
                                     "ts": utc_now().isoformat(),

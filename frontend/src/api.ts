@@ -16,7 +16,8 @@ export const api = {
   status: () => request<any>('/api/status'),
   mode: () => request<any>('/api/mode'),
   watchlist: () => request<any[]>('/api/watchlist'),
-  addWatch: (symbol: string) => request('/api/watchlist', { method: 'POST', body: JSON.stringify({ symbol }) }),
+  addWatch: (symbol: string, exchange = 'NSE') =>
+    request('/api/watchlist', { method: 'POST', body: JSON.stringify({ symbol, exchange }) }),
   removeWatch: (symbol: string) => request(`/api/watchlist/${symbol}`, { method: 'DELETE' }),
   candles: (symbol: string, timeframe = '5m') => request<any>(`/api/candles/${symbol}?timeframe=${timeframe}&limit=200`),
   signals: () => request<any[]>('/api/signals'),

@@ -90,17 +90,30 @@ class SignalEngine:
 
             self._strategy = SoreScalperPro(strat.parameters or {})
             portfolio = await self._get_portfolio(db)
-            symbols = strat.symbols or ["NIFTY"]
+            symbols = strat.symbols or ["CRUDEOIL"]
             timeframe = strat.timeframe or "5m"
+
+            # Map symbol -> exchange from watchlist when available
+            wl = (await db.execute(select(models.WatchlistItem))).scalars().all()
+            exch_map = {w.symbol: w.exchange for w in wl}
+            token_map = {w.symbol: w.token for w in wl if w.token}
 
             ltp_map = {}
             for symbol in symbols:
+                exchange = exch_map.get(symbol, strat.exchange or "NSE")
+                # Ensure candle series exists
                 df = market_data_service.get_candles(symbol, timeframe, 250)
                 if df is None or len(df) < 50:
                     continue
                 tick = market_data_service.get_tick(symbol)
                 if tick and tick.get("ltp"):
                     ltp_map[symbol] = float(tick["ltp"])
+                # Attach token/exchange onto tick metadata for Angel path
+                if symbol in token_map:
+                    cur = market_data_service.get_tick(symbol) or {"symbol": symbol}
+                    cur["token"] = token_map[symbol]
+                    cur["exchange"] = exchange
+                    market_data_service._ticks[symbol] = cur
 
                 result = self._strategy.last_result(df.reset_index())
                 self._last_eval = utc_now().isoformat()
@@ -112,6 +125,7 @@ class SignalEngine:
                     if result.signal != "HOLD":
                         self._last_signal = {
                             "symbol": symbol,
+                            "exchange": exchange,
                             "signal": result.signal,
                             "price": result.price,
                             "reason": result.reason,
@@ -139,12 +153,16 @@ class SignalEngine:
                     continue
 
                 qty = max(1, int(portfolio.max_position_size // max(result.price, 1)))
+                # Crude oil futures: use lot-friendly qty default
+                if symbol == "CRUDEOIL":
+                    qty = max(1, min(qty, 1))
                 sig = models.Signal(
                     idempotency_key=idem,
                     strategy_id=strat.id,
                     strategy_version=strat.version,
                     symbol=symbol,
-                    exchange=strat.exchange or "NSE",
+                    exchange=exchange,
+                    instrument_token=token_map.get(symbol, ""),
                     timeframe=timeframe,
                     signal_type=result.signal,
                     price=result.price,
