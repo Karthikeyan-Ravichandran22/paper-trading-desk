@@ -46,7 +46,12 @@ class Settings(BaseSettings):
 
     @property
     def angel_configured(self) -> bool:
-        return bool(self.angel_api_key and self.angel_client_code)
+        return bool(
+            self.angel_api_key
+            and self.angel_client_code
+            and self.angel_password
+            and self.angel_totp_secret
+        )
 
     @property
     def is_paper_mode(self) -> bool:

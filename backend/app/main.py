@@ -17,6 +17,7 @@ from app.core.config import get_settings
 from app.core.safety import current_mode_label
 from app.db.seed import seed_database
 from app.db.session import init_db
+from app.services.broker.angel_one import angel_client
 from app.services.market.data_service import market_data_service
 from app.services.strategy.engine import signal_engine
 
@@ -33,6 +34,21 @@ async def lifespan(app: FastAPI):
 
     await init_db()
     await seed_database()
+
+    # Attempt Angel One login when credentials are present (market data only)
+    if settings.angel_configured:
+        login_result = await angel_client.login()
+        if login_result.get("status"):
+            logger.info("Angel One connected for market data (orders remain PAPER-only)")
+            market_data_service._source = "ANGEL_ONE"
+        else:
+            logger.warning(
+                "Angel One login failed — falling back to DEMO data: %s",
+                login_result.get("message"),
+            )
+            market_data_service._source = "DEMO"
+    else:
+        logger.info("Angel One not fully configured — using DEMO market data")
 
     symbols = [s.strip() for s in settings.demo_symbols.split(",") if s.strip()]
     await market_data_service.start(symbols, timeframe="5m")

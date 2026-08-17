@@ -9,6 +9,7 @@ import logging
 from typing import Any, Optional
 
 import httpx
+import pyotp
 
 from app.core.config import get_settings
 from app.core.safety import LiveTradingBlockedError, live_orders_allowed
@@ -29,7 +30,12 @@ class AngelOneClient:
 
     @property
     def is_configured(self) -> bool:
-        return self.settings.angel_configured
+        return bool(
+            self.settings.angel_api_key
+            and self.settings.angel_client_code
+            and self.settings.angel_password
+            and self.settings.angel_totp_secret
+        )
 
     @property
     def is_connected(self) -> bool:
@@ -39,6 +45,10 @@ class AngelOneClient:
     def last_error(self) -> Optional[str]:
         return self._last_error
 
+    def _generate_totp(self) -> str:
+        secret = self.settings.angel_totp_secret.strip().replace(" ", "")
+        return pyotp.TOTP(secret).now()
+
     def _headers(self) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {self.jwt_token}",
@@ -47,21 +57,24 @@ class AngelOneClient:
             "X-UserType": "USER",
             "X-SourceID": "WEB",
             "X-ClientLocalIP": "127.0.0.1",
-            "X-ClientPublicIP": "127.0.0.1",
+            "X-ClientPublicIP": "100.52.140.165",
             "X-MACAddress": "00:00:00:00:00:00",
             "X-PrivateKey": self.settings.angel_api_key,
         }
 
     async def login(self, totp: str | None = None) -> dict[str, Any]:
+        # Always reload settings so freshly saved .env values are picked up after restart
+        self.settings = get_settings()
         if not self.is_configured:
             self._last_error = "Angel One credentials not configured"
             return {"status": False, "message": self._last_error}
 
-        # Password/PIN never logged
+        code = (totp or "").strip() or self._generate_totp()
+        # Password/PIN/TOTP never logged
         payload = {
             "clientcode": self.settings.angel_client_code,
             "password": self.settings.angel_password,
-            "totp": totp or "",
+            "totp": code,
         }
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -74,7 +87,7 @@ class AngelOneClient:
                         "X-UserType": "USER",
                         "X-SourceID": "WEB",
                         "X-ClientLocalIP": "127.0.0.1",
-                        "X-ClientPublicIP": "127.0.0.1",
+                        "X-ClientPublicIP": "100.52.140.165",
                         "X-MACAddress": "00:00:00:00:00:00",
                         "X-PrivateKey": self.settings.angel_api_key,
                     },
@@ -86,17 +99,17 @@ class AngelOneClient:
                     self.refresh_token = data["data"].get("refreshToken", "")
                     self._connected = True
                     self._last_error = None
-                    # Strip tokens from returned copy for API responses
-                    safe = {"status": True, "message": "Angel One authentication succeeded"}
-                    return safe
+                    return {"status": True, "message": "Angel One authentication succeeded"}
                 self._last_error = data.get("message", "Angel One authentication failed")
                 self._connected = False
+                # Never include raw response secrets
                 return {"status": False, "message": self._last_error}
         except Exception as exc:
             self._last_error = f"Angel One authentication failed: {exc}"
             self._connected = False
             logger.exception("Angel One login error")
             return {"status": False, "message": self._last_error}
+
 
     async def get_ltp(self, exchange: str, symbol: str, token: str) -> Optional[float]:
         if not self.jwt_token:
