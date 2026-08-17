@@ -1,0 +1,43 @@
+//@version=6
+indicator("SORE Scalper Pro — Automation & Visual Edition v7.60", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// Full Pine source provided by user — executable logic ported to
+// backend/app/services/strategy/sore_scalper.py (SoreScalperPro).
+// Keep this file as the canonical reference. Do not silently change logic.
+
+grpUI = "=== Clean UI Settings ==="
+showDash        = input.bool(true,  "Show Dashboard",            group=grpUI)
+showTradeUI     = input.bool(true,  "Show Trade Target Table",   group=grpUI)
+showCloud       = input.bool(true,  "Show Trend Cloud",          group=grpUI)
+showHTLine      = input.bool(true,  "Show Trend Line",           group=grpUI)
+showTargets     = input.bool(true,  "Show EP/SL/TP Lines",       group=grpUI)
+dashSizeStr     = input.string("Small", "Dashboard Size", options=["Tiny", "Small", "Normal"], group=grpUI)
+
+grp1 = "=== Trend Engine ==="
+emaLen    = input.int(34, "Base EMA Length",    group=grp1)
+htAmp     = input.int(2,  "HalfTrend Amplitude",group=grp1)
+stLen     = input.int(10, "Supertrend ATR Len", group=grp1)
+stMult    = input.float(3.0,"Supertrend Mult",  group=grp1, step=0.1)
+
+grp2 = "=== Oscillator ==="
+fastOsc   = input.int(12, "Oscillator Fast",    group=grp2)
+slowOsc   = input.int(26, "Oscillator Slow",    group=grp2)
+sigOsc    = input.int(9,  "Oscillator Signal",  group=grp2)
+
+grp3 = "=== Filters ==="
+maFastLen = input.int(13, "EMA Fast", group=grp3)
+maSlowLen = input.int(34, "EMA Slow", group=grp3)
+atrLen    = input.int(14, "ATR Len",  group=grp3)
+rsiLen    = input.int(14, "RSI Len",  group=grp3)
+minMTF    = input.int(4,  "Min MTFs (out of 11)", group=grp3)
+minEaF    = input.int(2,  "Min EA Filters (4)",   group=grp3)
+
+grp4 = "=== Dynamic Trade Lines & Exits ==="
+slATR           = input.float(1.5, "SL ATR Mult",  group=grp4, step=0.1)
+baseTp1ATR      = input.float(1.0, "Base TP1 ATR Mult", group=grp4, step=0.1)
+baseTp2ATR      = input.float(2.5, "Base TP2 ATR Mult", group=grp4, step=0.1)
+useDynamicVol   = input.bool(true,  "Auto-Adjust TP based on Volatility?", group=grp4)
+use1mExit       = input.bool(true,  "Exit on 1m Trend Flip?", group=grp4)
+useExit         = input.bool(false, "Early Exit on Stoch Flip?", group=grp4)
+
+// See Python port for full body: HalfTrend, Supertrend, Neon, MTF, entries/exits.
