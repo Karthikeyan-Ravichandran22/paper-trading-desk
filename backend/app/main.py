@@ -26,7 +26,8 @@ from app.services.strategy.engine import signal_engine
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("paper_trading")
 
-FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = Path(__import__("os").environ.get("FRONTEND_DIST", str(_REPO_ROOT / "frontend" / "dist")))
 
 
 @asynccontextmanager
