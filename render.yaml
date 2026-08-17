@@ -3,6 +3,9 @@ services:
     name: paper-trading-desk
     runtime: docker
     plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile.web
+    dockerContext: .
     healthCheckPath: /health
     envVars:
       - key: TRADING_MODE
@@ -15,6 +18,8 @@ services:
         value: sqlite+aiosqlite:///./data/paper_trading.db
       - key: SECRET_KEY
         generateValue: true
+      - key: DEFAULT_STARTING_CAPITAL
+        value: "100000"
       - key: ANGEL_API_KEY
         sync: false
       - key: ANGEL_CLIENT_CODE
@@ -23,5 +28,3 @@ services:
         sync: false
       - key: ANGEL_TOTP_SECRET
         sync: false
-      - key: DEFAULT_STARTING_CAPITAL
-        value: "100000"
