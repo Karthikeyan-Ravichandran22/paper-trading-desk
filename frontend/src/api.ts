@@ -38,6 +38,8 @@ export const api = {
   angelLogin: (totp: string) => request('/api/angel/login', { method: 'POST', body: JSON.stringify({ totp }) }),
   probeLive: () => request<any>('/api/safety/probe-live-order', { method: 'POST' }),
   updatePortfolio: (body: any) => request('/api/portfolio/settings', { method: 'PATCH', body: JSON.stringify(body) }),
+  features: (symbol = 'CRUDEOIL', timeframe = '5m') =>
+    request<any>(`/api/features/current?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}`),
 };
 
 export function wsUrl() {

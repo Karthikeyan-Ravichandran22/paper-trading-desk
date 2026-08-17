@@ -81,8 +81,9 @@ Supported executable logic:
 **Explicitly flagged (visual / approximate):**
 
 - Pine `table` dashboards, `line`/`label` drawings, `plot*` overlays
-- `alert()` webhooks (replaced by internal signal + notification engine)
 - Exact `request.security` MTF parity needs multi-timeframe candle feeds
+
+TradingView chart features (BUY/SELL, EP/SL/TP) can also be sent via webhook — see **[TRADINGVIEW_WEBHOOK.md](TRADINGVIEW_WEBHOOK.md)**.
 
 ## 7-day paper test
 
@@ -101,6 +102,8 @@ Market Data → Candles → Indicators → SORE Strategy → Signal Engine
 - `GET /api/watchlist` — quotes
 - `GET /api/candles/{symbol}` — OHLCV + markers
 - `GET /api/signals` / `GET /api/portfolio` / `GET /api/trades`
+- `GET /api/features/current` — chart-style features (WAIT / MTF / EP / SL / TP)
+- `POST /api/webhook/tradingview` — TradingView alert JSON → paper signal only
 - `POST /api/backtest` — labelled BACKTEST (isolated from paper account)
 - `POST /api/safety/probe-live-order` — proves live order path is blocked
 - `WS /ws/live` — tick + heartbeat stream

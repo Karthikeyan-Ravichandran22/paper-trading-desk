@@ -18,9 +18,10 @@ export function Dashboard() {
   const [portfolio, setPortfolio] = useState<any>(null);
   const [trades, setTrades] = useState<any[]>([]);
   const [toasts, setToasts] = useState<any[]>([]);
+  const [features, setFeatures] = useState<any>(null);
 
   async function refresh() {
-    const [st, wl, sig, pos, port, tr, notes, candles] = await Promise.all([
+    const [st, wl, sig, pos, port, tr, notes, candles, feat] = await Promise.all([
       api.status(),
       api.watchlist(),
       api.currentSignal(),
@@ -29,6 +30,7 @@ export function Dashboard() {
       api.trades(),
       api.notifications(),
       api.candles(symbol, tf),
+      api.features(symbol, tf).catch(() => null),
     ]);
     setStatus(st);
     setWatch(wl);
@@ -37,6 +39,7 @@ export function Dashboard() {
     setPortfolio(port);
     setTrades(tr.slice(0, 8));
     setChart(candles);
+    setFeatures(feat);
     if (notes?.length) {
       setToasts((prev) => [...notes.slice(-3), ...prev].slice(0, 5));
     }
@@ -145,6 +148,24 @@ export function Dashboard() {
                 </div>
               ) : (
                 <div style={{ color: 'var(--muted)', fontSize: '0.85rem', marginTop: 8 }}>FLAT — no open position</div>
+              )}
+            </div>
+            <div style={{ borderTop: '1px solid var(--border)', margin: '0.5rem 0', paddingTop: '0.6rem' }}>
+              <div style={{ fontSize: '0.7rem', color: 'var(--muted)', letterSpacing: '0.1em' }}>
+                CHART FEATURES · {features?.status || '—'}
+              </div>
+              <div className="kv">
+                <span>Mode</span><span>{features?.mode || '—'}</span>
+                <span>Trend</span><span>{features?.trend || '—'}</span>
+                <span>MTF Gate</span><span>{features?.mtf_gate || '—'}</span>
+                <span>Vol Mult</span><span>{features?.volatility_mult != null ? `${features.volatility_mult}x` : '—'}</span>
+                <span>Entry</span><span>₹{fmt(features?.entry)}</span>
+                <span>Stop-Loss</span><span>₹{fmt(features?.stop_loss)}</span>
+                <span>TP1</span><span>₹{fmt(features?.tp1)}</span>
+                <span>TP2</span><span>₹{fmt(features?.tp2)}</span>
+              </div>
+              {features?.reason && (
+                <div style={{ marginTop: 8, fontSize: '0.72rem', color: 'var(--muted)' }}>{features.reason}</div>
               )}
             </div>
           </div>

@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -742,6 +742,253 @@ async def force_report(db: AsyncSession = Depends(get_db)) -> dict:
         raise HTTPException(404, "No experiment")
     report = await generate_experiment_report(db, exp)
     return report
+
+
+# ── TradingView webhook + live features ──────────────────────────────
+class TradingViewWebhook(BaseModel):
+    symbol: str = "CRUDEOIL"
+    action: str = "BUY"  # BUY / SELL / EXIT
+    price: Optional[float] = None
+    sl: Optional[float] = None
+    tp: Optional[float] = None
+    tp2: Optional[float] = None
+    quantity: Optional[int] = None
+    timeframe: Optional[str] = "5m"
+    reason: Optional[str] = None
+
+
+def _finite(v: Any) -> Optional[float]:
+    try:
+        if v is None:
+            return None
+        f = float(v)
+        if f != f:  # NaN
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_tv_payload(raw: dict[str, Any]) -> TradingViewWebhook:
+    """Accept common TradingView / Pine field aliases."""
+    data = {str(k).lower(): v for k, v in raw.items()}
+    action = str(
+        data.get("action")
+        or data.get("side")
+        or data.get("signal")
+        or data.get("order")
+        or "BUY"
+    ).upper()
+    if action in ("LONG", "BUY_SIGNAL", "B"):
+        action = "BUY"
+    elif action in ("SHORT", "SELL_SIGNAL", "S"):
+        action = "SELL"
+    elif action in ("FLAT", "CLOSE", "CLOSE_ALL"):
+        action = "EXIT"
+    return TradingViewWebhook(
+        symbol=str(data.get("symbol") or data.get("ticker") or "CRUDEOIL"),
+        action=action,
+        price=_finite(data.get("price") or data.get("close") or data.get("entry") or data.get("ep")),
+        sl=_finite(data.get("sl") or data.get("stop") or data.get("stop_loss") or data.get("stoploss")),
+        tp=_finite(data.get("tp") or data.get("tp1") or data.get("target") or data.get("take_profit")),
+        tp2=_finite(data.get("tp2") or data.get("target2")),
+        quantity=int(data["quantity"]) if data.get("quantity") not in (None, "") else None,
+        timeframe=str(data.get("timeframe") or data.get("interval") or "5m"),
+        reason=str(data.get("reason") or data.get("comment") or "") or None,
+    )
+
+
+@router.post("/webhook/tradingview")
+async def tradingview_webhook(request: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    """Receive Pine alert JSON from TradingView → PAPER trade only.
+
+    TradingView may post JSON as application/json or text/plain.
+    """
+    import json as _json
+
+    from app.services.market.instruments import resolve_instrument
+    from app.services.paper.order_manager import OrderManager
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    raw_text = (await request.body()).decode("utf-8", errors="replace").strip()
+    if not raw_text:
+        raise HTTPException(400, "Empty webhook body")
+    try:
+        payload = _json.loads(raw_text)
+    except _json.JSONDecodeError as exc:
+        raise HTTPException(400, f"Webhook body must be JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "Webhook JSON must be an object")
+
+    body = _parse_tv_payload(payload)
+    action = body.action.upper().strip()
+    if action not in ("BUY", "SELL", "EXIT"):
+        raise HTTPException(400, f"Unsupported action: {body.action}")
+
+    resolved = await resolve_instrument(body.symbol, "MCX" if "CRUDE" in body.symbol.upper() else "NSE")
+    symbol = resolved["symbol"]
+    exchange = resolved["exchange"]
+    price = float(body.price or market_data_service.get_ltp(symbol) or 0)
+    if price <= 0:
+        raise HTTPException(400, "Missing/invalid price in webhook")
+
+    strat = (
+        await db.execute(select(models.StrategyConfig).where(models.StrategyConfig.is_active == True))  # noqa: E712
+    ).scalar_one_or_none()
+    port = (await db.execute(select(models.Portfolio).limit(1))).scalar_one_or_none()
+    if not port:
+        raise HTTPException(404, "Paper portfolio not found")
+
+    ts = utc_now().strftime("%Y%m%d%H%M%S%f")
+    version = strat.version if strat else "tv-webhook"
+    timeframe = body.timeframe or (strat.timeframe if strat else "5m")
+    idem = OrderManager.make_idempotency_key(symbol, action, f"tv-{ts}-{price}", version, timeframe)
+
+    existing = (
+        await db.execute(select(models.Signal).where(models.Signal.idempotency_key == idem))
+    ).scalar_one_or_none()
+    if existing:
+        return {"status": "duplicate_ignored", "signal_id": existing.id, "mode": "PAPER"}
+
+    qty = body.quantity or 1
+    sig = models.Signal(
+        idempotency_key=idem,
+        strategy_id=strat.id if strat else None,
+        strategy_version=version,
+        symbol=symbol,
+        exchange=exchange,
+        instrument_token=resolved.get("token") or "",
+        timeframe=timeframe,
+        signal_type=action,
+        price=price,
+        stop_loss=body.sl,
+        target=body.tp,
+        target2=body.tp2,
+        quantity=qty,
+        reason=body.reason or f"TradingView alert webhook ({action})",
+        indicator_values={
+            "source": "tradingview_webhook",
+            "content_type": content_type,
+            "trading_symbol": resolved.get("trading_symbol"),
+            "raw_symbol": body.symbol,
+            "raw_payload": payload,
+        },
+        confidence=None,
+        candle_ts=utc_now(),
+    )
+    db.add(sig)
+    await db.commit()
+    await db.refresh(sig)
+
+    om = OrderManager()
+    result = await om.process_signal(
+        db,
+        portfolio=port,
+        signal=sig,
+        strategy_active=bool(strat.is_active) if strat else True,
+        market_data_valid=True,
+        data_source="TRADINGVIEW",
+    )
+    db.add(
+        models.AuditLog(
+            category="WEBHOOK",
+            action=f"TV_{action}",
+            symbol=symbol,
+            strategy=strat.name if strat else "TradingView",
+            signal=action,
+            detail={"result": result, "mode": "PAPER", "sl": body.sl, "tp": body.tp},
+        )
+    )
+    await db.commit()
+
+    signal_engine._last_signal = {
+        "id": sig.id,
+        "symbol": symbol,
+        "exchange": exchange,
+        "signal": action,
+        "price": price,
+        "stop_loss": body.sl,
+        "target": body.tp,
+        "target2": body.tp2,
+        "quantity": qty,
+        "reason": sig.reason,
+        "time": utc_now().isoformat(),
+        "source": "tradingview_webhook",
+    }
+    signal_engine._notifications.append(
+        {
+            "type": action,
+            "title": f"NEW {action} SIGNAL (TradingView)",
+            "symbol": symbol,
+            "price": price,
+            "sl": body.sl,
+            "target": body.tp,
+            "order": result,
+            "mode": "PAPER",
+            "ts": utc_now().isoformat(),
+        }
+    )
+    return {
+        "status": "accepted",
+        "mode": "PAPER",
+        "live_order": False,
+        "symbol": symbol,
+        "exchange": exchange,
+        "action": action,
+        "price": price,
+        "stop_loss": body.sl,
+        "target": body.tp,
+        "order": result,
+        "message": "TradingView feature received and paper-traded only.",
+    }
+
+
+@router.get("/features/current")
+async def current_features(symbol: str = "CRUDEOIL", timeframe: str = "5m") -> dict:
+    """Dashboard-style features similar to the Pine table (trend/MTF/SL/TP)."""
+    df = market_data_service.get_candles(symbol.upper(), timeframe, 250)
+    if df is None or df.empty:
+        return {"symbol": symbol.upper(), "timeframe": timeframe, "status": "NO_DATA", "note": "No candles yet"}
+    strategy = SoreScalperPro()
+    computed = strategy.compute_dataframe(df.reset_index())
+    row = computed.iloc[-1]
+    trade_state = int(row.get("trade_state", 0) or 0)
+    status = (
+        "IN BUY" if trade_state == 1 else
+        "IN SELL" if trade_state == -1 else
+        "BUY READY" if str(row.get("signal")) == "BUY" else
+        "SELL READY" if str(row.get("signal")) == "SELL" else
+        "WAIT"
+    )
+    trend = (
+        "Bullish" if bool(row.get("trend_bull")) else
+        "Bearish" if bool(row.get("trend_bear")) else
+        "Neutral"
+    )
+    mtf_bull = int(row.get("mtf_bull", 0) or 0)
+    mtf_bear = int(row.get("mtf_bear", 0) or 0)
+    return {
+        "title": "SORE SCALPER PRO FEATURES",
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "source": market_data_service.source,
+        "mode": "Live" if bool(row.get("trend_bull") or row.get("trend_bear")) else "Wait",
+        "trend": trend,
+        "status": status,
+        "signal": str(row.get("signal")),
+        "price": _finite(row.get("close")),
+        "entry": _finite(row.get("ep")),
+        "stop_loss": _finite(row.get("sl")),
+        "tp1": _finite(row.get("tp1")),
+        "tp2": _finite(row.get("tp2")),
+        "strength": _finite(row.get("strength")),
+        "mtf_bull": mtf_bull,
+        "mtf_bear": mtf_bear,
+        "mtf_gate": f"{'BULL' if mtf_bull >= mtf_bear else 'BEAR'} {max(mtf_bull, mtf_bear)}/11",
+        "volatility_mult": _finite(row.get("vol_multiplier")) or 1.0,
+        "reason": str(row.get("reason") or ""),
+        "note": "App-computed SORE features (same family as your chart panels). PAPER only.",
+    }
 
 
 # ── Backtest ─────────────────────────────────────────────────────────
